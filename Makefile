@@ -48,13 +48,16 @@ enable: install
 	systemctl enable --now $(SERVICE_NAME)
 
 start: install
-	systemctl start $(SERVICE_NAME)
+	@if systemctl is-active --quiet $(SERVICE_NAME); then \
+		systemctl restart $(SERVICE_NAME); \
+	else \
+		systemctl start $(SERVICE_NAME); \
+	fi
 
 stop:
 	systemctl stop $(SERVICE_NAME)
 
-restart: install
-	systemctl restart $(SERVICE_NAME)
+restart: start
 
 status:
 	systemctl status $(SERVICE_NAME) --no-pager || true

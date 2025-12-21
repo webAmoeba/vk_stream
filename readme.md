@@ -13,7 +13,10 @@ vk_stream (24/7 VK RTMP из папки с видео)
 make install
 
 2) Настройка .env
-Пример:
+Скопируйте пример:
+cp .env.example .env
+
+Минимум:
 RTMP_URL="rtmp://<vk-server>/live"
 STREAM_KEY="<vk-key>"
 VIDEO_DIR="/root/downloads/myVideos"
@@ -30,7 +33,7 @@ START_EP="S02E16"
 - PLAYLIST_PATH="var/playlist.txt"
 - FFMPEG_PATH="ffmpeg"
 Стрим-кодеки (опционально):
-- STREAM_VIDEO_CODEC="copy"
+- STREAM_VIDEO_CODEC="copy"    # минимум нагрузки
 - STREAM_AUDIO_CODEC="aac"
 - STREAM_AUDIO_BITRATE="160k"
 - STREAM_AUDIO_RATE="48000"
@@ -77,7 +80,7 @@ make convert-all
 - CONVERT_AUDIO_BITRATE="160k"
 - CONVERT_AUDIO_RATE="48000"
 - CONVERT_AUDIO_CHANNELS=2
-- CONVERT_SCALE="1280x720"
+- CONVERT_SCALE="1920x1080"    # поставить "" чтобы оставить исходный размер
 - CONVERT_OUT_EXT=".mp4"
 - CONVERT_INPUT_EXTS=".mkv"
 - CONVERT_OVERWRITE=0

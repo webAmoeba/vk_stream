@@ -70,7 +70,7 @@ class ConvertConfig:
         out_ext = env_str("CONVERT_OUT_EXT", ".mp4")
         if not out_ext.startswith("."):
             out_ext = "." + out_ext
-        scale = parse_size(env_str("CONVERT_SCALE", ""))
+        scale = parse_size(env_str("CONVERT_SCALE", "1920x1080"))
         input_exts = parse_exts(env_str("CONVERT_INPUT_EXTS", ".mkv"), default=[".mkv"])
         overwrite = env_bool("CONVERT_OVERWRITE", False)
 
