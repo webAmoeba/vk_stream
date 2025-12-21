@@ -72,6 +72,7 @@ class Config:
     title_box_border: int
     title_x: str
     title_y: str
+    stream_mode: str
 
     @classmethod
     def from_env(cls, cwd: Path) -> "Config":
@@ -150,6 +151,7 @@ class Config:
             title_box_border=env_int("STREAM_TITLE_BOX_BORDER", 10),
             title_x=env_str("STREAM_TITLE_X", "20"),
             title_y=env_str("STREAM_TITLE_Y", "20"),
+            stream_mode=env_str("STREAM_MODE", "auto").lower(),
         )
 
     def output_url(self) -> str:
@@ -233,11 +235,11 @@ def title_updater(
             return
 
 
-def build_vf(cfg: Config) -> Optional[str]:
+def build_vf(cfg: Config, subs_source: Optional[Path]) -> Optional[str]:
     filters: List[str] = []
 
-    if cfg.sub_burn:
-        subs_path = escape_filter_path(cfg.sub_playlist_path)
+    if cfg.sub_burn and subs_source is not None:
+        subs_path = escape_filter_path(subs_source)
         sub = f"subtitles={subs_path}:si={cfg.sub_si}"
         if cfg.sub_fonts_dir:
             fonts = escape_filter_path(Path(cfg.sub_fonts_dir))
@@ -265,7 +267,7 @@ def build_vf(cfg: Config) -> Optional[str]:
     return ",".join(filters)
 
 
-def build_ffmpeg_cmd(cfg: Config) -> List[str]:
+def build_ffmpeg_cmd_concat(cfg: Config) -> List[str]:
     if (cfg.sub_burn or cfg.draw_text) and cfg.video_codec == "copy":
         raise ValueError("STREAM_VIDEO_CODEC=copy is not compatible with filters")
 
@@ -288,7 +290,7 @@ def build_ffmpeg_cmd(cfg: Config) -> List[str]:
         str(cfg.playlist_path),
     ]
 
-    vf = build_vf(cfg)
+    vf = build_vf(cfg, cfg.sub_playlist_path if cfg.sub_burn else None)
     if vf:
         cmd += ["-vf", vf]
 
@@ -339,10 +341,77 @@ def build_ffmpeg_cmd(cfg: Config) -> List[str]:
     return cmd
 
 
-def run_ffmpeg(cmd: List[str]) -> int:
+def build_ffmpeg_cmd_file(cfg: Config, input_path: Path) -> List[str]:
+    if (cfg.sub_burn or cfg.draw_text) and cfg.video_codec == "copy":
+        raise ValueError("STREAM_VIDEO_CODEC=copy is not compatible with filters")
+
+    cmd = [
+        cfg.ffmpeg_path,
+        "-hide_banner",
+        "-loglevel",
+        cfg.loglevel,
+        "-re",
+        "-i",
+        str(input_path),
+    ]
+
+    vf = build_vf(cfg, input_path if cfg.sub_burn else None)
+    if vf:
+        cmd += ["-vf", vf]
+
+    cmd += [
+        "-map",
+        "0:v:0",
+        "-map",
+        f"0:a:{cfg.audio_index}",
+    ]
+
+    if cfg.video_codec == "copy":
+        cmd += ["-c:v", "copy"]
+    else:
+        cmd += [
+            "-c:v",
+            cfg.video_codec,
+            "-preset",
+            cfg.preset,
+            "-pix_fmt",
+            "yuv420p",
+            "-g",
+            str(cfg.gop),
+        ]
+        if cfg.fps:
+            cmd += ["-r", cfg.fps]
+        if cfg.video_bitrate:
+            cmd += ["-b:v", cfg.video_bitrate]
+        if cfg.maxrate:
+            cmd += ["-maxrate", cfg.maxrate]
+        if cfg.bufsize:
+            cmd += ["-bufsize", cfg.bufsize]
+
+    if cfg.audio_codec == "copy":
+        cmd += ["-c:a", "copy"]
+    else:
+        cmd += [
+            "-c:a",
+            cfg.audio_codec,
+            "-b:a",
+            cfg.audio_bitrate,
+            "-ar",
+            cfg.audio_rate,
+            "-ac",
+            str(cfg.audio_channels),
+        ]
+
+    cmd += ["-f", "flv", cfg.output_url()]
+    return cmd
+
+
+def run_ffmpeg(cmd: List[str], stop_event: Optional[threading.Event] = None) -> int:
     proc = subprocess.Popen(cmd)
 
     def handle(_sig: int, _frame) -> None:
+        if stop_event is not None:
+            stop_event.set()
         try:
             proc.terminate()
         except ProcessLookupError:
@@ -357,7 +426,7 @@ def run_ffmpeg(cmd: List[str]) -> int:
     return proc.wait()
 
 
-def build_playlist_from_env(cfg: Config) -> List[Path]:
+def build_playlist_from_env(cfg: Config, create_sub_playlist: bool) -> List[Path]:
     if not cfg.video_dir.exists():
         raise FileNotFoundError(f"VIDEO_DIR does not exist: {cfg.video_dir}")
     files = scan_videos(cfg.video_dir, cfg.video_exts)
@@ -379,7 +448,7 @@ def build_playlist_from_env(cfg: Config) -> List[Path]:
     write_playlist(files, cfg.playlist_path)
     print(f"Playlist: {cfg.playlist_path} ({len(files)} files)", file=sys.stderr)
 
-    if cfg.sub_burn:
+    if create_sub_playlist and cfg.sub_burn:
         write_playlist_relative(files, cfg.sub_playlist_path, cfg.video_dir)
         print(
             f"Sub playlist: {cfg.sub_playlist_path} ({len(files)} files)",
@@ -387,6 +456,61 @@ def build_playlist_from_env(cfg: Config) -> List[Path]:
         )
 
     return files
+
+
+def stream_files(cfg: Config, files: List[Path], dry_run: bool) -> int:
+    stop_event = threading.Event()
+    if cfg.draw_text:
+        update_title_file(cfg.title_file, "")
+
+    while True:
+        for idx, f in enumerate(files, start=1):
+            if stop_event.is_set():
+                return 0
+            title = cfg.title_prefix + title_for_path(f, cfg.title_mode)
+            cmd = build_ffmpeg_cmd_file(cfg, f)
+            print(
+                f"Streaming {idx}/{len(files)}: {f}",
+                file=sys.stderr,
+            )
+            print("FFmpeg:", shlex.join(cmd), file=sys.stderr)
+            if dry_run:
+                return 0
+
+            if cfg.draw_text:
+                update_title_file(cfg.title_file, "")
+
+            proc = subprocess.Popen(cmd)
+
+            def handle(_sig: int, _frame) -> None:
+                stop_event.set()
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    return
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
+            signal.signal(signal.SIGTERM, handle)
+            signal.signal(signal.SIGINT, handle)
+
+            if cfg.draw_text:
+                if cfg.title_delay > 0:
+                    stop_event.wait(cfg.title_delay)
+                update_title_file(cfg.title_file, title)
+
+            code = proc.wait()
+            if stop_event.is_set():
+                return code
+            if code != 0:
+                return code
+
+        if not cfg.loop:
+            break
+
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -406,14 +530,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Config error: {exc}", file=sys.stderr)
         return 2
 
+    mode = config.stream_mode
+    if mode not in {"auto", "concat", "file"}:
+        print("Config error: STREAM_MODE must be auto|concat|file", file=sys.stderr)
+        return 2
+    use_file_mode = mode == "file" or (mode == "auto" and config.sub_burn)
+
     try:
-        files = build_playlist_from_env(config)
+        files = build_playlist_from_env(config, create_sub_playlist=not use_file_mode)
     except Exception as exc:
         print(f"Playlist error: {exc}", file=sys.stderr)
         return 2
 
     if args.gen_playlist:
         return 0
+
+    if use_file_mode:
+        return stream_files(config, files, args.dry_run)
 
     stop_event = threading.Event()
     if config.draw_text:
@@ -425,12 +558,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         t.start()
 
-    cmd = build_ffmpeg_cmd(config)
+    cmd = build_ffmpeg_cmd_concat(config)
     print("FFmpeg:", shlex.join(cmd), file=sys.stderr)
     if args.dry_run:
         return 0
     try:
-        return run_ffmpeg(cmd)
+        return run_ffmpeg(cmd, stop_event=stop_event)
     finally:
         stop_event.set()
 
