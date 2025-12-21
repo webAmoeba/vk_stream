@@ -120,7 +120,7 @@ def build_ffmpeg_cmd(cfg: Config, input_path: Path) -> List[str]:
     filter_complex = (
         f"[0:v]{vf_pre}[vpre];"
         f"[2:v]{vf_main}[vmain];"
-        f"[vpre][vmain]scale2ref=ref_w:ref_h[vpre_s][vmain_s];"
+        f"[vpre][vmain]scale2ref=main_w:main_h[vpre_s][vmain_s];"
         f"[2:a:{cfg.audio_index}]aformat=sample_rates={cfg.audio_rate}:"
         f"channel_layouts={layout}[a1];"
         f"[vpre_s][1:a][vmain_s][a1]concat=n=2:v=1:a=1[v][a]"
