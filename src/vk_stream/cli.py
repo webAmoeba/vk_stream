@@ -74,8 +74,12 @@ def parse_size(value: str) -> Tuple[int, int]:
 
 def ffconcat_quote(path: Path) -> str:
     s = str(path)
-    s = s.replace("\\", "\\\\").replace('"', '\\"')
-    return f"\"{s}\""
+    # concat demuxer understands single-quoted strings; double quotes are not stripped
+    if "'" not in s:
+        return f"'{s}'"
+    # Fallback: escape spaces and backslashes
+    s = s.replace("\\", "\\\\").replace(" ", "\\ ").replace("#", "\\#")
+    return s
 
 
 def escape_filter_path(path: Path) -> str:
