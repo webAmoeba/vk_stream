@@ -210,7 +210,7 @@ def build_vf(config: Config) -> Optional[str]:
 
     if config.sub_burn:
         subs_path = escape_filter_path(config.playlist_path)
-        sub = f"subtitles={subs_path}:f=concat:si={config.sub_si}"
+        sub = f"subtitles={subs_path}:si={config.sub_si}"
         if config.sub_fonts_dir:
             fonts = escape_filter_path(Path(config.sub_fonts_dir))
             sub += f":fontsdir={fonts}"
