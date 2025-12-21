@@ -141,17 +141,13 @@ def probe_video_props(input_path: Path) -> tuple[str, str]:
 def build_ffmpeg_cmd(cfg: Config, input_path: Path, pre_roll_res: str, pre_roll_rate: str) -> List[str]:
     subs_path = escape_filter_path(input_path)
     title = title_for_path(input_path)
-    start_text = f"Starting {title}"
     layout = audio_layout(cfg.audio_channels)
     vf_main = (
         f"subtitles={subs_path}:si={cfg.sub_si},"
         f"drawtext=text='{title}':x=20:y=20:fontsize=36:fontcolor=white:"
         f"box=1:boxcolor=black@0.5:boxborderw=10,format=yuv420p"
     )
-    vf_pre = (
-        f"drawtext=text='{start_text}':x=20:y=20:fontsize=36:fontcolor=white:"
-        f"box=1:boxcolor=black@0.5:boxborderw=10,format=yuv420p"
-    )
+    vf_pre = "format=yuv420p"
     filter_complex = (
         f"[0:v]{vf_pre}[vpre];"
         f"[2:v]{vf_main}[vmain];"
