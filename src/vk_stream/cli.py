@@ -12,6 +12,9 @@ from typing import List, Optional
 
 from .common import EP_RE, env_bool, env_int, env_str, escape_filter_path, load_dotenv, parse_exts, scan_videos
 
+PRE_ROLL_SECONDS = 30
+PRE_ROLL_RES = "1280x720"
+
 
 @dataclass
 class Config:
@@ -92,13 +95,35 @@ def title_for_path(path: Path) -> str:
     return safe[:64] if safe else "VIDEO"
 
 
+def audio_layout(channels: int) -> str:
+    if channels == 1:
+        return "mono"
+    if channels == 2:
+        return "stereo"
+    return "stereo"
+
+
 def build_ffmpeg_cmd(cfg: Config, input_path: Path) -> List[str]:
     subs_path = escape_filter_path(input_path)
     title = title_for_path(input_path)
-    vf = (
+    start_text = f"Starting {title}"
+    layout = audio_layout(cfg.audio_channels)
+    vf_main = (
         f"subtitles={subs_path}:si={cfg.sub_si},"
         f"drawtext=text='{title}':x=20:y=20:fontsize=36:fontcolor=white:"
         f"box=1:boxcolor=black@0.5:boxborderw=10"
+    )
+    vf_pre = (
+        f"drawtext=text='{start_text}':x=20:y=20:fontsize=36:fontcolor=white:"
+        f"box=1:boxcolor=black@0.5:boxborderw=10"
+    )
+    filter_complex = (
+        f"[0:v]{vf_pre}[vpre];"
+        f"[2:v]{vf_main}[vmain];"
+        f"[vpre][vmain]scale2ref=ref_w:ref_h[vpre_s][vmain_s];"
+        f"[2:a:{cfg.audio_index}]aformat=sample_rates={cfg.audio_rate}:"
+        f"channel_layouts={layout}[a1];"
+        f"[vpre_s][1:a][vmain_s][a1]concat=n=2:v=1:a=1[v][a]"
     )
 
     cmd = [
@@ -107,17 +132,25 @@ def build_ffmpeg_cmd(cfg: Config, input_path: Path) -> List[str]:
         "-loglevel",
         cfg.loglevel,
         "-re",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=black:s={PRE_ROLL_RES}:d={PRE_ROLL_SECONDS}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"anullsrc=r={cfg.audio_rate}:cl={layout}:d={PRE_ROLL_SECONDS}",
         "-i",
         str(input_path),
     ]
 
     cmd += [
-        "-vf",
-        vf,
+        "-filter_complex",
+        filter_complex,
         "-map",
-        "0:v:0",
+        "[v]",
         "-map",
-        f"0:a:{cfg.audio_index}",
+        "[a]",
         "-c:v",
         "libx264",
         "-preset",
