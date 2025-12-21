@@ -6,11 +6,14 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 from .common import EP_RE, env_bool, env_int, env_str, escape_filter_path, load_dotenv, parse_exts, scan_videos
+
+PAUSE_SECONDS = 30
 
 
 @dataclass
@@ -186,6 +189,9 @@ def stream_files(cfg: Config, files: List[Path], dry_run: bool) -> int:
         for idx, f in enumerate(order, start=1):
             if stop:
                 return 0
+            if PAUSE_SECONDS and not (first_pass and idx == 1):
+                print(f"Pause {PAUSE_SECONDS}s before next file...", file=sys.stderr)
+                time.sleep(PAUSE_SECONDS)
             print(
                 f"Playing {idx}/{len(order)}: {f}",
                 file=sys.stderr,
