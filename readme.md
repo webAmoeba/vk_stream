@@ -44,6 +44,7 @@ START_EP="S02E16"
 - LOGLEVEL="info"
 - LOOP=1
 - PLAYLIST_PATH="var/playlist.txt"
+- SUB_PLAYLIST_PATH="/root/downloads/myVideos/vk_stream_subs_playlist.txt"
 - FFMPEG_PATH="ffmpeg"
 
 3) Запуск
@@ -65,4 +66,5 @@ make gen
 
 Заметки:
 - Плейлист строится по файлам *.mkv, сортировка по SxxEyy в названии.
-- Субтитры прожигаются через subtitles фильтр с f=concat.
+- Субтитры прожигаются через subtitles фильтр (libass).
+- Для субтитров создается отдельный плейлист с относительными путями (по умолчанию в VIDEO_DIR), чтобы избежать ошибки "Unsafe file name".

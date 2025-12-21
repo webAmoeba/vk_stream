@@ -124,6 +124,15 @@ def write_playlist(files: Iterable[Path], playlist_path: Path) -> None:
             f.write(f"file {ffconcat_quote(p)}\n")
 
 
+def write_playlist_relative(files: Iterable[Path], playlist_path: Path, base_dir: Path) -> None:
+    playlist_path.parent.mkdir(parents=True, exist_ok=True)
+    with playlist_path.open("w", encoding="utf-8") as f:
+        f.write("ffconcat version 1.0\n")
+        for p in files:
+            rel = p.relative_to(base_dir)
+            f.write(f"file {ffconcat_quote(rel)}\n")
+
+
 @dataclass
 class Config:
     rtmp_url: str
@@ -133,6 +142,7 @@ class Config:
     sub_si: int
     start_ep: str
     playlist_path: Path
+    sub_playlist_path: Path
     video_size: str
     video_bitrate: str
     maxrate: str
@@ -165,10 +175,21 @@ class Config:
         if not playlist_path.is_absolute():
             playlist_path = cwd / playlist_path
 
+        sub_playlist_path = env_str("SUB_PLAYLIST_PATH", "")
+        if sub_playlist_path:
+            sub_playlist_path = Path(sub_playlist_path)
+            if not sub_playlist_path.is_absolute():
+                sub_playlist_path = cwd / sub_playlist_path
+        else:
+            sub_playlist_path = None
+
         video_dir_path = Path(video_dir).expanduser()
         if not video_dir_path.is_absolute():
             video_dir_path = cwd / video_dir_path
         video_dir_path = video_dir_path.resolve()
+
+        if sub_playlist_path is None:
+            sub_playlist_path = video_dir_path / "vk_stream_subs_playlist.txt"
 
         return cls(
             rtmp_url=rtmp_url,
@@ -178,6 +199,7 @@ class Config:
             sub_si=sub_si,
             start_ep=start_ep,
             playlist_path=playlist_path,
+            sub_playlist_path=sub_playlist_path,
             video_size=env_str("VIDEO_SIZE", ""),
             video_bitrate=env_str("VIDEO_BITRATE", "4500k"),
             maxrate=env_str("MAXRATE", "6000k"),
@@ -209,7 +231,7 @@ def build_vf(config: Config) -> Optional[str]:
         filters.append(f"scale={w}:{h}")
 
     if config.sub_burn:
-        subs_path = escape_filter_path(config.playlist_path)
+        subs_path = escape_filter_path(config.sub_playlist_path)
         sub = f"subtitles={subs_path}:si={config.sub_si}"
         if config.sub_fonts_dir:
             fonts = escape_filter_path(Path(config.sub_fonts_dir))
@@ -324,6 +346,13 @@ def build_playlist(config: Config) -> None:
 
     write_playlist(files, config.playlist_path)
     print(f"Playlist: {config.playlist_path} ({len(files)} files)", file=sys.stderr)
+
+    if config.sub_burn:
+        write_playlist_relative(files, config.sub_playlist_path, config.video_dir)
+        print(
+            f"Sub playlist: {config.sub_playlist_path} ({len(files)} files)",
+            file=sys.stderr,
+        )
 
 
 def main(argv: Optional[List[str]] = None) -> int:
