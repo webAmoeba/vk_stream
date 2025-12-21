@@ -1,6 +1,6 @@
-vk_stream (24/7 VK RTMP из папки с .mkv)
+vk_stream (24/7 VK RTMP из папки с видео)
 
-Проект стримит .mkv файлы по кругу в VK Live через RTMP, выбирая нужную аудиодорожку и прожигая субтитры на лету (FFmpeg + libass). Один процесс FFmpeg читает concat-плейлист и транслирует без разрывов между файлами.
+Проект стримит видеофайлы по кругу в VK Live через RTMP. Один процесс FFmpeg читает concat-плейлист и транслирует без разрывов между файлами.
 
 0) Требования
 - Ubuntu 24.04 (root или sudo)
@@ -17,35 +17,24 @@ make install
 RTMP_URL="rtmp://<vk-server>/live"
 STREAM_KEY="<vk-key>"
 VIDEO_DIR="/root/downloads/myVideos"
-AUDIO_INDEX=1
-SUB_SI=1
 START_EP="S02E16"
 
 Пояснения:
 - VIDEO_DIR: корневая папка с сезонами/эпизодами.
-- AUDIO_INDEX=1: вторая аудиодорожка (0-based среди аудио).
-- SUB_SI=1: второй поток субтитров (0-based среди subtitle streams).
 - START_EP: начать с указанного эпизода (ищется по имени SxxEyy). При LOOP=1 плейлист будет циклично начинаться с этого эпизода.
 
 Дополнительно (опционально):
-- VIDEO_SIZE="1920x1080"       # если нужно масштабирование
-- VIDEO_BITRATE="4500k"
-- MAXRATE="6000k"
-- BUFSIZE="9000k"
-- PRESET="veryfast"
-- GOP=48
-- FPS="24000/1001"
-- AUDIO_BITRATE="160k"
-- AUDIO_RATE="48000"
-- AUDIO_CHANNELS=2
-- SUB_BURN=1                   # 1=прожигать, 0=без субтитров
-- SUB_FONTS_DIR="/path/to/fonts"
-- SUB_FORCE_STYLE="FontName=DejaVu Sans,FontSize=36"
 - LOGLEVEL="info"
 - LOOP=1
+- VIDEO_EXTS=".mp4,.mkv,.mov"
 - PLAYLIST_PATH="var/playlist.txt"
-- SUB_PLAYLIST_PATH="/root/downloads/myVideos/vk_stream_subs_playlist.txt"
 - FFMPEG_PATH="ffmpeg"
+Стрим-кодеки (опционально):
+- STREAM_VIDEO_CODEC="copy"
+- STREAM_AUDIO_CODEC="aac"
+- STREAM_AUDIO_BITRATE="160k"
+- STREAM_AUDIO_RATE="48000"
+- STREAM_AUDIO_CHANNELS=2
 
 3) Запуск
 make start
@@ -65,6 +54,30 @@ ffprobe -v error -select_streams s -show_entries stream=index:stream_tags=langua
 make gen
 
 Заметки:
-- Плейлист строится по файлам *.mkv, сортировка по SxxEyy в названии.
-- Субтитры прожигаются через subtitles фильтр (libass).
-- Для субтитров создается отдельный плейлист с относительными путями (по умолчанию в VIDEO_DIR), чтобы избежать ошибки "Unsafe file name".
+- Плейлист строится по файлам из VIDEO_DIR, сортировка по SxxEyy в названии.
+- Если рядом есть и .mp4 и .mkv с одинаковым именем (SxxEyy), будет выбран .mp4.
+
+5) Конвертация с прожигом субтитров (по одному файлу)
+Цель: один раз подготовить файлы с вшитыми субтитрами и нужной аудиодорожкой.
+
+Проверка одного файла (оригинал не удаляется):
+make convert-one FILE=/path/to/file.mkv
+
+Полная конвертация (по очереди, удаляет оригинал после успеха):
+make convert-all
+
+Настройки конвертации в .env (опционально):
+- AUDIO_INDEX=1                # если задан, используется как дефолт для CONVERT_AUDIO_INDEX
+- SUB_SI=1                     # если задан, используется как дефолт для CONVERT_SUB_SI
+- CONVERT_AUDIO_INDEX=1
+- CONVERT_SUB_SI=1
+- CONVERT_SUB_BURN=1
+- CONVERT_PRESET="veryfast"
+- CONVERT_CRF=20
+- CONVERT_AUDIO_BITRATE="160k"
+- CONVERT_AUDIO_RATE="48000"
+- CONVERT_AUDIO_CHANNELS=2
+- CONVERT_SCALE="1280x720"
+- CONVERT_OUT_EXT=".mp4"
+- CONVERT_INPUT_EXTS=".mkv"
+- CONVERT_OVERWRITE=0

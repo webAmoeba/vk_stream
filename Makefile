@@ -3,10 +3,20 @@ SERVICE_TEMPLATE := config/vk_stream.service
 SYSTEMD_PATH := /etc/systemd/system/$(SERVICE_NAME).service
 WORKDIR := $(CURDIR)
 
-.PHONY: gen deps venv start stop restart status logs install uninstall enable disable
+.PHONY: gen deps venv start stop restart status logs install uninstall enable disable convert-one convert-all
 
 gen:
 	./.venv/bin/python -m vk_stream --gen-playlist
+
+convert-one:
+	@if [ -z "$(FILE)" ]; then \
+		echo "Usage: make convert-one FILE=/path/to/file.mkv"; \
+		exit 2; \
+	fi
+	./.venv/bin/python -m vk_stream.convert --one "$(FILE)"
+
+convert-all:
+	./.venv/bin/python -m vk_stream.convert --all --delete-original
 
 deps:
 	@if ! command -v ffmpeg >/dev/null || ! command -v curl >/dev/null; then \
