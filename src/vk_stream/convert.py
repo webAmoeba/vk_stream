@@ -184,6 +184,8 @@ def convert_one(
         cfg.audio_rate,
         "-ac",
         str(cfg.audio_channels),
+        "-f",
+        "mp4",
         str(tmp_path),
     ]
 
