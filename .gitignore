@@ -1,10 +1,6 @@
 .env
-logs/
-*.log
-playlist.txt
-nowplaying.txt
 **/*.DS_Store
 .venv/
-var/
 __pycache__/
 *.egg-info/
+*.log

@@ -57,22 +57,6 @@ def env_bool(key: str, default: bool = False) -> bool:
     return val.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def ffconcat_quote(path: Path) -> str:
-    s = str(path)
-    if "'" not in s:
-        return f"'{s}'"
-    s = s.replace("\\", "\\\\").replace(" ", "\\ ").replace("#", "\\#")
-    return s
-
-
-def escape_filter_path(path: Path) -> str:
-    s = str(path)
-    s = s.replace("\\", "\\\\")
-    s = s.replace(":", "\\:")
-    s = s.replace(" ", "\\ ")
-    return s
-
-
 def parse_exts(raw: str, default: Optional[List[str]] = None) -> List[str]:
     parts = [p.strip().lower() for p in raw.replace(" ", ",").split(",") if p.strip()]
     exts: List[str] = []
@@ -80,7 +64,7 @@ def parse_exts(raw: str, default: Optional[List[str]] = None) -> List[str]:
         if not p.startswith("."):
             p = "." + p
         exts.append(p)
-    return exts or (default or [".mp4", ".mkv", ".mov"])
+    return exts or (default or [".mkv"])
 
 
 def sort_key(path: Path) -> Tuple[int, int, int, str]:
@@ -101,45 +85,12 @@ def scan_videos(video_dir: Path, exts: Iterable[str]) -> List[Path]:
     for p in video_dir.rglob("*"):
         if p.is_file() and p.suffix.lower() in exts_lc:
             files.append(p)
-
-    # Prefer formats in the order provided by exts
-    priority = {e.lower(): i for i, e in enumerate(exts)}
-    chosen: dict[Path, Path] = {}
-    for p in files:
-        key = p.with_suffix("")
-        existing = chosen.get(key)
-        if existing is None:
-            chosen[key] = p
-            continue
-        if priority.get(p.suffix.lower(), 99) < priority.get(existing.suffix.lower(), 99):
-            chosen[key] = p
-
-    return sorted(chosen.values(), key=sort_key)
+    return sorted(files, key=sort_key)
 
 
-def write_playlist_relative(files: Iterable[Path], playlist_path: Path, base_dir: Path) -> None:
-    playlist_path.parent.mkdir(parents=True, exist_ok=True)
-    with playlist_path.open("w", encoding="utf-8") as f:
-        f.write("ffconcat version 1.0\n")
-        for p in files:
-            rel = p.relative_to(base_dir)
-            f.write(f"file {ffconcat_quote(rel)}\n")
-
-
-def rotate_start(files: List[Path], start_ep: str) -> Tuple[List[Path], Optional[int]]:
-    if not start_ep:
-        return files, None
-    needle = start_ep.strip().upper()
-    for i, p in enumerate(files):
-        stem = p.stem.upper()
-        if stem == needle or needle in stem:
-            return files[i:] + files[:i], i
-    return files, None
-
-
-def write_playlist(files: Iterable[Path], playlist_path: Path) -> None:
-    playlist_path.parent.mkdir(parents=True, exist_ok=True)
-    with playlist_path.open("w", encoding="utf-8") as f:
-        f.write("ffconcat version 1.0\n")
-        for p in files:
-            f.write(f"file {ffconcat_quote(p)}\n")
+def escape_filter_path(path: Path) -> str:
+    s = str(path)
+    s = s.replace("\\", "\\\\")
+    s = s.replace(":", "\\:")
+    s = s.replace(" ", "\\ ")
+    return s

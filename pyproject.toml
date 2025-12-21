@@ -1,7 +1,7 @@
 [project]
 name = "vk-stream"
 version = "0.1.0"
-description = "24/7 VK RTMP streamer for MKV playlists"
+description = "Simple VK RTMP streamer (per-file, subtitles burned)"
 requires-python = ">=3.10"
 dependencies = []
 
