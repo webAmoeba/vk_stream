@@ -47,7 +47,7 @@ restart: install
 	systemctl restart $(SERVICE_NAME)
 
 status:
-	systemctl status $(SERVICE_NAME) --no-pager
+	systemctl status $(SERVICE_NAME) --no-pager || true
 
 logs:
 	journalctl -u $(SERVICE_NAME) -n 200 --no-pager
