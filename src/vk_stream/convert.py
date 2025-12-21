@@ -127,19 +127,25 @@ def convert_one(
     input_path: Path,
     delete_original: bool,
     dry_run: bool,
-) -> int:
+) -> tuple[int, str, bool]:
+    """
+    Returns: (rc, status, deleted_original)
+    status in {"converted", "skipped", "dry-run", "failed"}.
+    """
     if not input_path.exists():
         print(f"Missing input: {input_path}", file=sys.stderr)
-        return 2
+        return 2, "failed", False
 
     out_path, tmp_path = output_paths(input_path, cfg.out_ext)
     if out_path.exists() and not cfg.overwrite:
         if delete_original and out_path.stat().st_size > 1024 * 1024:
             input_path.unlink(missing_ok=True)
             print(f"Deleted original (output exists): {input_path}", file=sys.stderr)
-        else:
-            print(f"Skip (output exists): {out_path}", file=sys.stderr)
-        return 0
+            return 0, "skipped", True
+        print(f"Skip (output exists): {out_path}", file=sys.stderr)
+        return 0, "skipped", False
+
+    print(f"Converting: {input_path}", file=sys.stderr)
 
     vf = build_vf(cfg, input_path)
     cmd = [
@@ -183,7 +189,7 @@ def convert_one(
 
     print("FFmpeg:", shlex.join(cmd), file=sys.stderr)
     if dry_run:
-        return 0
+        return 0, "dry-run", False
 
     if tmp_path.exists():
         tmp_path.unlink()
@@ -191,7 +197,7 @@ def convert_one(
     if rc != 0:
         if tmp_path.exists():
             tmp_path.unlink()
-        return rc
+        return rc, "failed", False
 
     if out_path.exists():
         out_path.unlink()
@@ -201,7 +207,8 @@ def convert_one(
         if out_path.exists() and out_path.stat().st_size > 0:
             input_path.unlink(missing_ok=True)
             print(f"Deleted original: {input_path}", file=sys.stderr)
-    return 0
+            return 0, "converted", True
+    return 0, "converted", False
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -231,7 +238,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     if args.one:
-        return convert_one(cfg, Path(args.one), args.delete_original, args.dry_run)
+        rc, _status, _deleted = convert_one(
+            cfg, Path(args.one), args.delete_original, args.dry_run
+        )
+        if rc == 0 and not args.dry_run:
+            print("Done.", file=sys.stderr)
+        return rc
 
     # --all
     files = scan_videos(cfg.video_dir, cfg.input_exts)
@@ -242,10 +254,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Ensure deterministic order even if ext priority removed duplicates
     files = sorted(files, key=sort_key)
 
+    total = len(files)
+    converted = skipped = deleted = dry_run = 0
+
+    print(f"Starting convert-all: {total} file(s)", file=sys.stderr)
     for f in files:
-        rc = convert_one(cfg, f, args.delete_original, args.dry_run)
+        rc, status, was_deleted = convert_one(cfg, f, args.delete_original, args.dry_run)
+        if status == "converted":
+            converted += 1
+        elif status == "skipped":
+            skipped += 1
+        elif status == "dry-run":
+            dry_run += 1
+        if was_deleted:
+            deleted += 1
         if rc != 0:
+            print("Stopped due to error.", file=sys.stderr)
             return rc
+
+    print(
+        f"Done. converted={converted} skipped={skipped} deleted={deleted} dry-run={dry_run}",
+        file=sys.stderr,
+    )
     return 0
 
 
