@@ -102,8 +102,8 @@ def scan_videos(video_dir: Path, exts: Iterable[str]) -> List[Path]:
         if p.is_file() and p.suffix.lower() in exts_lc:
             files.append(p)
 
-    # Prefer mp4 over mkv if both exist for same path without extension
-    priority = {".mp4": 0, ".mkv": 1, ".mov": 2}
+    # Prefer formats in the order provided by exts
+    priority = {e.lower(): i for i, e in enumerate(exts)}
     chosen: dict[Path, Path] = {}
     for p in files:
         key = p.with_suffix("")
@@ -111,12 +111,19 @@ def scan_videos(video_dir: Path, exts: Iterable[str]) -> List[Path]:
         if existing is None:
             chosen[key] = p
             continue
-        if priority.get(p.suffix.lower(), 99) < priority.get(
-            existing.suffix.lower(), 99
-        ):
+        if priority.get(p.suffix.lower(), 99) < priority.get(existing.suffix.lower(), 99):
             chosen[key] = p
 
     return sorted(chosen.values(), key=sort_key)
+
+
+def write_playlist_relative(files: Iterable[Path], playlist_path: Path, base_dir: Path) -> None:
+    playlist_path.parent.mkdir(parents=True, exist_ok=True)
+    with playlist_path.open("w", encoding="utf-8") as f:
+        f.write("ffconcat version 1.0\n")
+        for p in files:
+            rel = p.relative_to(base_dir)
+            f.write(f"file {ffconcat_quote(rel)}\n")
 
 
 def rotate_start(files: List[Path], start_ep: str) -> Tuple[List[Path], Optional[int]]:

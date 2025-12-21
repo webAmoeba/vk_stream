@@ -29,15 +29,35 @@ START_EP="S02E16"
 Дополнительно (опционально):
 - LOGLEVEL="info"
 - LOOP=1
-- VIDEO_EXTS=".mp4,.mkv,.mov"
+- VIDEO_EXTS=".mkv"
 - PLAYLIST_PATH="var/playlist.txt"
 - FFMPEG_PATH="ffmpeg"
-Стрим-кодеки (опционально):
-- STREAM_VIDEO_CODEC="copy"    # минимум нагрузки
+
+Стрим c прожигом субтитров и названием (вариант Б):
+- STREAM_SUB_BURN=1           # включить прожиг субтитров на лету (требует перекодирования видео)
+- STREAM_SUB_SI=1             # индекс сабов (среди subtitle-стримов)
+- STREAM_AUDIO_INDEX=1        # индекс аудио (среди audio-стримов)
+- STREAM_DRAW_TEXT=1          # вывод названия поверх видео
+- STREAM_TITLE_FILE="var/nowplaying.txt"
+- STREAM_TITLE_MODE="stem"    # stem | episode
+- STREAM_TITLE_DELAY=0        # задержка показа названия (сек)
+
+Кодеки/битрейты для варианта Б:
+- STREAM_VIDEO_CODEC="libx264"
+- STREAM_VIDEO_BITRATE="4500k"
+- STREAM_MAXRATE="6000k"
+- STREAM_BUFSIZE="9000k"
+- STREAM_PRESET="veryfast"
+- STREAM_GOP=48
 - STREAM_AUDIO_CODEC="aac"
 - STREAM_AUDIO_BITRATE="160k"
 - STREAM_AUDIO_RATE="48000"
 - STREAM_AUDIO_CHANNELS=2
+
+Низкая нагрузка (без субтитров и названия):
+- STREAM_SUB_BURN=0
+- STREAM_DRAW_TEXT=0
+- STREAM_VIDEO_CODEC="copy"
 
 3) Запуск
 make start
@@ -58,7 +78,8 @@ make gen
 
 Заметки:
 - Плейлист строится по файлам из VIDEO_DIR, сортировка по SxxEyy в названии.
-- Если рядом есть и .mp4 и .mkv с одинаковым именем (SxxEyy), будет выбран .mp4.
+- Если рядом есть файлы с одинаковым именем (SxxEyy), выбирается расширение по порядку VIDEO_EXTS.
+- Для прожига субтитров используется отдельный плейлист `vk_stream_subs_playlist.txt` в VIDEO_DIR, он перезаписывается при каждом запуске.
 
 5) Конвертация с прожигом субтитров (по одному файлу)
 Цель: один раз подготовить файлы с вшитыми субтитрами и нужной аудиодорожкой.
