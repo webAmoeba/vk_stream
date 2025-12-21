@@ -38,6 +38,9 @@ class ConvertConfig:
     sub_burn: bool
     preset: str
     crf: int
+    vbitrate: str
+    maxrate: str
+    bufsize: str
     audio_bitrate: str
     audio_rate: str
     audio_channels: int
@@ -62,6 +65,9 @@ class ConvertConfig:
         sub_burn = env_bool("CONVERT_SUB_BURN", True)
         preset = env_str("CONVERT_PRESET", "veryfast")
         crf = env_int("CONVERT_CRF", 20)
+        vbitrate = env_str("CONVERT_VBITRATE", "")
+        maxrate = env_str("CONVERT_MAXRATE", "")
+        bufsize = env_str("CONVERT_BUFSIZE", "")
         audio_bitrate = env_str("CONVERT_AUDIO_BITRATE", "160k")
         audio_rate = env_str("CONVERT_AUDIO_RATE", "48000")
         audio_channels = env_int("CONVERT_AUDIO_CHANNELS", 2)
@@ -70,7 +76,7 @@ class ConvertConfig:
         out_ext = env_str("CONVERT_OUT_EXT", ".mp4")
         if not out_ext.startswith("."):
             out_ext = "." + out_ext
-        scale = parse_size(env_str("CONVERT_SCALE", "1920x1080"))
+        scale = parse_size(env_str("CONVERT_SCALE", ""))
         input_exts = parse_exts(env_str("CONVERT_INPUT_EXTS", ".mkv"), default=[".mkv"])
         overwrite = env_bool("CONVERT_OVERWRITE", False)
 
@@ -86,6 +92,9 @@ class ConvertConfig:
             sub_burn=sub_burn,
             preset=preset,
             crf=crf,
+            vbitrate=vbitrate,
+            maxrate=maxrate,
+            bufsize=bufsize,
             audio_bitrate=audio_bitrate,
             audio_rate=audio_rate,
             audio_channels=audio_channels,
@@ -172,8 +181,6 @@ def convert_one(
         "libx264",
         "-preset",
         cfg.preset,
-        "-crf",
-        str(cfg.crf),
         "-pix_fmt",
         "yuv420p",
         "-c:a",
@@ -188,6 +195,15 @@ def convert_one(
         "mp4",
         str(tmp_path),
     ]
+
+    if cfg.vbitrate:
+        cmd += ["-b:v", cfg.vbitrate]
+        if cfg.maxrate:
+            cmd += ["-maxrate", cfg.maxrate]
+        if cfg.bufsize:
+            cmd += ["-bufsize", cfg.bufsize]
+    else:
+        cmd += ["-crf", str(cfg.crf)]
 
     print("FFmpeg:", shlex.join(cmd), file=sys.stderr)
     if dry_run:
