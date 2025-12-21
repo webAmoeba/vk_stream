@@ -7,3 +7,4 @@ nowplaying.txt
 .venv/
 var/
 __pycache__/
+*.egg-info/
