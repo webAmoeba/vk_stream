@@ -23,7 +23,11 @@ venv:
 	if ! command -v uv >/dev/null; then \
 		echo "uv still not found in PATH"; exit 1; \
 	fi; \
-	uv venv; \
+	if [ ! -d ".venv" ]; then \
+		uv venv; \
+	else \
+		echo ".venv already exists, skipping uv venv"; \
+	fi; \
 	uv pip install -e .
 
 install: deps venv
