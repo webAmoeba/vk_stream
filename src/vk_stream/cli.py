@@ -19,7 +19,6 @@ class Config:
     stream_key: str
     video_dir: Path
     start_ep: str
-    start_time: str
     loop: bool
     loglevel: str
     ffmpeg_path: str
@@ -52,7 +51,6 @@ class Config:
             stream_key=stream_key,
             video_dir=video_dir_path,
             start_ep=start_ep,
-            start_time=env_str("START_TIME", ""),
             loop=env_bool("LOOP", True),
             loglevel=env_str("LOGLEVEL", "info"),
             ffmpeg_path=env_str("FFMPEG_PATH", "ffmpeg"),
@@ -94,7 +92,7 @@ def title_for_path(path: Path) -> str:
     return safe[:64] if safe else "VIDEO"
 
 
-def build_ffmpeg_cmd(cfg: Config, input_path: Path, start_time: Optional[str]) -> List[str]:
+def build_ffmpeg_cmd(cfg: Config, input_path: Path) -> List[str]:
     subs_path = escape_filter_path(input_path)
     title = title_for_path(input_path)
     vf = (
@@ -112,8 +110,6 @@ def build_ffmpeg_cmd(cfg: Config, input_path: Path, start_time: Optional[str]) -
         "-i",
         str(input_path),
     ]
-    if start_time:
-        cmd += ["-ss", start_time]
 
     cmd += [
         "-vf",
@@ -181,7 +177,6 @@ def stream_files(cfg: Config, files: List[Path], dry_run: bool) -> int:
     signal.signal(signal.SIGINT, handle)
 
     first_pass = True
-    start_time_used = False
     while True:
         if first_pass and start_idx:
             order = files[start_idx:] + files[:start_idx]
@@ -195,11 +190,7 @@ def stream_files(cfg: Config, files: List[Path], dry_run: bool) -> int:
                 f"Playing {idx}/{len(order)}: {f}",
                 file=sys.stderr,
             )
-            start_time = None
-            if cfg.start_time and not start_time_used and first_pass and idx == 1:
-                start_time = cfg.start_time
-                start_time_used = True
-            cmd = build_ffmpeg_cmd(cfg, f, start_time)
+            cmd = build_ffmpeg_cmd(cfg, f)
             print("FFmpeg:", shlex.join(cmd), file=sys.stderr)
             if dry_run:
                 return 0
