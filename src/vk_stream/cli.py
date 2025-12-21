@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shlex
 import signal
 import subprocess
@@ -12,34 +11,6 @@ from pathlib import Path
 from typing import List, Optional
 
 from .common import EP_RE, env_bool, env_int, env_str, escape_filter_path, load_dotenv, parse_exts, scan_videos
-
-PRE_ROLL_SECONDS = 30
-PRE_ROLL_RES = "1280x720"
-PRE_ROLL_RATE = "24000/1001"
-
-
-def parse_res(value: str) -> str:
-    v = value.strip()
-    if not v:
-        return ""
-    parts = v.lower().split("x")
-    if len(parts) != 2:
-        raise ValueError("FORCE_RES must be like 1920x1080")
-    try:
-        w = int(parts[0])
-        h = int(parts[1])
-    except ValueError as exc:
-        raise ValueError("FORCE_RES must be like 1920x1080") from exc
-    if w <= 0 or h <= 0:
-        raise ValueError("FORCE_RES must be like 1920x1080")
-    return f"{w}x{h}"
-
-
-def pad_to_res(force_res: str) -> str:
-    if not force_res:
-        return ""
-    w, h = force_res.split("x")
-    return f",pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"
 
 
 @dataclass
@@ -62,7 +33,6 @@ class Config:
     audio_bitrate: str
     audio_rate: str
     audio_channels: int
-    force_res: str
 
     @classmethod
     def from_env(cls, cwd: Path) -> "Config":
@@ -95,7 +65,6 @@ class Config:
             audio_bitrate=env_str("STREAM_AUDIO_BITRATE", "160k"),
             audio_rate=env_str("STREAM_AUDIO_RATE", "48000"),
             audio_channels=env_int("STREAM_AUDIO_CHANNELS", default=2),
-            force_res=parse_res(env_str("FORCE_RES", "")),
         )
 
     def output_url(self) -> str:
@@ -123,68 +92,13 @@ def title_for_path(path: Path) -> str:
     return safe[:64] if safe else "VIDEO"
 
 
-def audio_layout(channels: int) -> str:
-    if channels == 1:
-        return "mono"
-    if channels == 2:
-        return "stereo"
-    return "stereo"
-
-
-def probe_video_props(input_path: Path, force_res: str) -> tuple[str, str]:
-    cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_entries",
-        "stream=width,height,r_frame_rate,avg_frame_rate",
-        "-of",
-        "json",
-        str(input_path),
-    ]
-    try:
-        raw = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
-        data = json.loads(raw)
-    except (subprocess.CalledProcessError, json.JSONDecodeError):
-        return force_res or PRE_ROLL_RES, PRE_ROLL_RATE
-
-    streams = data.get("streams") or []
-    if not streams:
-        return force_res or PRE_ROLL_RES, PRE_ROLL_RATE
-
-    st = streams[0]
-    w = st.get("width")
-    h = st.get("height")
-    res = f"{w}x{h}" if w and h else PRE_ROLL_RES
-    rate = st.get("r_frame_rate") or st.get("avg_frame_rate") or PRE_ROLL_RATE
-    if rate == "0/0":
-        rate = PRE_ROLL_RATE
-    return force_res or res, rate
-
-
-def build_ffmpeg_cmd(cfg: Config, input_path: Path, pre_roll_res: str, pre_roll_rate: str) -> List[str]:
+def build_ffmpeg_cmd(cfg: Config, input_path: Path) -> List[str]:
     subs_path = escape_filter_path(input_path)
     title = title_for_path(input_path)
-    start_text = f"Starting {title}"
-    layout = audio_layout(cfg.audio_channels)
-    pad = pad_to_res(cfg.force_res)
-    vf_main = (
+    vf = (
         f"subtitles={subs_path}:si={cfg.sub_si},"
         f"drawtext=text='{title}':x=20:y=20:fontsize=36:fontcolor=white:"
-        f"box=1:boxcolor=black@0.5:boxborderw=10,format=yuv420p{pad}"
-    )
-    vf_pre = (
-        f"drawtext=text='{start_text}':x=20:y=20:fontsize=36:fontcolor=white:"
-        f"box=1:boxcolor=black@0.5:boxborderw=10,format=yuv420p"
-    )
-    filter_complex = (
-        f"[0:v]{vf_pre}[vpre];"
-        f"[2:v]{vf_main}[vmain];"
-        f"[2:a:{cfg.audio_index}]aformat=sample_rates={cfg.audio_rate}:"
-        f"channel_layouts={layout}[a1];"
-        f"[vpre][1:a][vmain][a1]concat=n=2:v=1:a=1[v][a]"
+        f"box=1:boxcolor=black@0.5:boxborderw=10"
     )
 
     cmd = [
@@ -193,25 +107,17 @@ def build_ffmpeg_cmd(cfg: Config, input_path: Path, pre_roll_res: str, pre_roll_
         "-loglevel",
         cfg.loglevel,
         "-re",
-        "-f",
-        "lavfi",
-        "-i",
-        f"color=c=black:s={pre_roll_res}:r={pre_roll_rate}:d={PRE_ROLL_SECONDS}",
-        "-f",
-        "lavfi",
-        "-i",
-        f"anullsrc=r={cfg.audio_rate}:cl={layout}:d={PRE_ROLL_SECONDS}",
         "-i",
         str(input_path),
     ]
 
     cmd += [
-        "-filter_complex",
-        filter_complex,
+        "-vf",
+        vf,
         "-map",
-        "[v]",
+        "0:v:0",
         "-map",
-        "[a]",
+        f"0:a:{cfg.audio_index}",
         "-c:v",
         "libx264",
         "-preset",
@@ -284,8 +190,7 @@ def stream_files(cfg: Config, files: List[Path], dry_run: bool) -> int:
                 f"Playing {idx}/{len(order)}: {f}",
                 file=sys.stderr,
             )
-            pre_roll_res, pre_roll_rate = probe_video_props(f, cfg.force_res)
-            cmd = build_ffmpeg_cmd(cfg, f, pre_roll_res, pre_roll_rate)
+            cmd = build_ffmpeg_cmd(cfg, f)
             print("FFmpeg:", shlex.join(cmd), file=sys.stderr)
             if dry_run:
                 return 0
