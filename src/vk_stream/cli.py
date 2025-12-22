@@ -75,7 +75,7 @@ class Config:
             video_bitrate=env_str("STREAM_VIDEO_BITRATE", "3000k"),
             maxrate=env_str("STREAM_MAXRATE", "6000k"),
             bufsize=env_str("STREAM_BUFSIZE", "9000k"),
-            preset=env_str("STREAM_PRESET", "veryfast"),
+            preset=env_str("STREAM_PRESET", "superfast"),
             gop=env_int("STREAM_GOP", default=48),
             audio_bitrate=env_str("STREAM_AUDIO_BITRATE", "160k"),
             audio_rate=env_str("STREAM_AUDIO_RATE", "48000"),
