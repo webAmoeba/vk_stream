@@ -20,6 +20,8 @@ cp .env.example .env
 Минимум:
 VK_URL="rtmp://<vk-server>/input/"
 VK_KEY="<vk-key>"
+TWITCH_URL="rtmp://live.twitch.tv/app"
+TWITCH_KEY=""
 VIDEO_DIR="/root/downloads/myVideos"
 START_EP="S02E16"
 
@@ -35,6 +37,7 @@ make status
 make logs
 
 5) Заметки
+- Если *_URL или *_KEY пустые, на эту платформу стрим не идёт.
 - START_EP влияет только на первый запуск цикла.
   Когда дойдёт до последнего файла, новый круг начнётся с первого.
 - Если START_EP не найден, начнётся с первого файла.

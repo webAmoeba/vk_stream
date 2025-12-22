@@ -26,6 +26,8 @@ from .common import (
 class Config:
     vk_url: str
     vk_key: str
+    twitch_url: str
+    twitch_key: str
     video_dir: Path
     start_ep: str
     loop: bool
@@ -45,8 +47,10 @@ class Config:
 
     @classmethod
     def from_env(cls, cwd: Path) -> "Config":
-        vk_url = env_str("VK_URL", required=True)
-        vk_key = env_str("VK_KEY", required=True)
+        vk_url = env_str("VK_URL", "")
+        vk_key = env_str("VK_KEY", "")
+        twitch_url = env_str("TWITCH_URL", "")
+        twitch_key = env_str("TWITCH_KEY", "")
         video_dir = env_str("VIDEO_DIR", required=True)
         start_ep = env_str("START_EP", "")
 
@@ -58,6 +62,8 @@ class Config:
         return cls(
             vk_url=vk_url,
             vk_key=vk_key,
+            twitch_url=twitch_url,
+            twitch_key=twitch_key,
             video_dir=video_dir_path,
             start_ep=start_ep,
             loop=env_bool("LOOP", True),
@@ -76,9 +82,15 @@ class Config:
             audio_channels=env_int("STREAM_AUDIO_CHANNELS", default=2),
         )
 
-    def output_url(self) -> str:
-        base = self.vk_url.rstrip("/")
-        return f"{base}/{self.vk_key}"
+    def output_urls(self) -> List[str]:
+        outputs: List[str] = []
+        if self.vk_url and self.vk_key:
+            base = self.vk_url.rstrip("/")
+            outputs.append(f"{base}/{self.vk_key}")
+        if self.twitch_url and self.twitch_key:
+            base = self.twitch_url.rstrip("/")
+            outputs.append(f"{base}/{self.twitch_key}")
+        return outputs
 
 
 def find_start_index(files: List[Path], start_ep: str) -> Optional[int]:
@@ -101,7 +113,7 @@ def title_for_path(path: Path) -> str:
     return safe[:64] if safe else "VIDEO"
 
 
-def build_ffmpeg_cmd(cfg: Config, input_path: Path) -> List[str]:
+def build_ffmpeg_cmd(cfg: Config, input_path: Path, output_urls: List[str]) -> List[str]:
     subs_path = escape_filter_path(input_path)
     title = title_for_path(input_path)
     vf = (
@@ -120,39 +132,40 @@ def build_ffmpeg_cmd(cfg: Config, input_path: Path) -> List[str]:
         str(input_path),
     ]
 
-    cmd += [
-        "-vf",
-        vf,
-        "-map",
-        "0:v:0",
-        "-map",
-        f"0:a:{cfg.audio_index}",
-        "-c:v",
-        "libx264",
-        "-preset",
-        cfg.preset,
-        "-pix_fmt",
-        "yuv420p",
-        "-g",
-        str(cfg.gop),
-        "-b:v",
-        cfg.video_bitrate,
-        "-maxrate",
-        cfg.maxrate,
-        "-bufsize",
-        cfg.bufsize,
-        "-c:a",
-        "aac",
-        "-b:a",
-        cfg.audio_bitrate,
-        "-ar",
-        cfg.audio_rate,
-        "-ac",
-        str(cfg.audio_channels),
-        "-f",
-        "flv",
-        cfg.output_url(),
-    ]
+    for url in output_urls:
+        cmd += [
+            "-vf",
+            vf,
+            "-map",
+            "0:v:0",
+            "-map",
+            f"0:a:{cfg.audio_index}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            cfg.preset,
+            "-pix_fmt",
+            "yuv420p",
+            "-g",
+            str(cfg.gop),
+            "-b:v",
+            cfg.video_bitrate,
+            "-maxrate",
+            cfg.maxrate,
+            "-bufsize",
+            cfg.bufsize,
+            "-c:a",
+            "aac",
+            "-b:a",
+            cfg.audio_bitrate,
+            "-ar",
+            cfg.audio_rate,
+            "-ac",
+            str(cfg.audio_channels),
+            "-f",
+            "flv",
+            url,
+        ]
     return cmd
 
 
@@ -199,7 +212,11 @@ def stream_files(cfg: Config, files: List[Path], dry_run: bool) -> int:
                 f"Playing {idx}/{len(order)}: {f}",
                 file=sys.stderr,
             )
-            cmd = build_ffmpeg_cmd(cfg, f)
+            output_urls = cfg.output_urls()
+            if not output_urls:
+                print("Config error: no output targets set", file=sys.stderr)
+                return 2
+            cmd = build_ffmpeg_cmd(cfg, f, output_urls)
             print("FFmpeg:", shlex.join(cmd), file=sys.stderr)
             if dry_run:
                 return 0
