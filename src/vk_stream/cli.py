@@ -72,7 +72,7 @@ class Config:
             video_exts=parse_exts(env_str("VIDEO_EXTS", ".mkv")),
             audio_index=env_int("AUDIO_INDEX", default=1),
             sub_si=env_int("SUB_SI", default=1),
-            video_bitrate=env_str("STREAM_VIDEO_BITRATE", "4500k"),
+            video_bitrate=env_str("STREAM_VIDEO_BITRATE", "3000k"),
             maxrate=env_str("STREAM_MAXRATE", "6000k"),
             bufsize=env_str("STREAM_BUFSIZE", "9000k"),
             preset=env_str("STREAM_PRESET", "veryfast"),
