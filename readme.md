@@ -18,7 +18,7 @@ make install
 cp .env.example .env
 
 Минимум:
-RTMP_URL="rtmp://<vk-server>/input/"
+VK_URL="rtmp://<vk-server>/input/"
 VK_KEY="<vk-key>"
 VIDEO_DIR="/root/downloads/myVideos"
 START_EP="S02E16"

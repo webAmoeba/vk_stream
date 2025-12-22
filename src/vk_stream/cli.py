@@ -24,7 +24,7 @@ from .common import (
 
 @dataclass
 class Config:
-    rtmp_url: str
+    vk_url: str
     vk_key: str
     video_dir: Path
     start_ep: str
@@ -45,7 +45,7 @@ class Config:
 
     @classmethod
     def from_env(cls, cwd: Path) -> "Config":
-        rtmp_url = env_str("RTMP_URL", required=True)
+        vk_url = env_str("VK_URL", required=True)
         vk_key = env_str("VK_KEY", required=True)
         video_dir = env_str("VIDEO_DIR", required=True)
         start_ep = env_str("START_EP", "")
@@ -56,7 +56,7 @@ class Config:
         video_dir_path = video_dir_path.resolve()
 
         return cls(
-            rtmp_url=rtmp_url,
+            vk_url=vk_url,
             vk_key=vk_key,
             video_dir=video_dir_path,
             start_ep=start_ep,
@@ -77,7 +77,7 @@ class Config:
         )
 
     def output_url(self) -> str:
-        base = self.rtmp_url.rstrip("/")
+        base = self.vk_url.rstrip("/")
         return f"{base}/{self.vk_key}"
 
 
