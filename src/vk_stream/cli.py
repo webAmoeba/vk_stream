@@ -10,13 +10,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from .common import EP_RE, env_bool, env_int, env_str, escape_filter_path, load_dotenv, parse_exts, scan_videos
+from .common import (
+    EP_RE,
+    env_bool,
+    env_int,
+    env_str,
+    escape_filter_path,
+    load_dotenv,
+    parse_exts,
+    scan_videos,
+)
 
 
 @dataclass
 class Config:
     rtmp_url: str
-    stream_key: str
+    vk_key: str
     video_dir: Path
     start_ep: str
     loop: bool
@@ -37,7 +46,7 @@ class Config:
     @classmethod
     def from_env(cls, cwd: Path) -> "Config":
         rtmp_url = env_str("RTMP_URL", required=True)
-        stream_key = env_str("STREAM_KEY", required=True)
+        vk_key = env_str("VK_KEY", required=True)
         video_dir = env_str("VIDEO_DIR", required=True)
         start_ep = env_str("START_EP", "")
 
@@ -48,7 +57,7 @@ class Config:
 
         return cls(
             rtmp_url=rtmp_url,
-            stream_key=stream_key,
+            vk_key=vk_key,
             video_dir=video_dir_path,
             start_ep=start_ep,
             loop=env_bool("LOOP", True),
@@ -69,7 +78,7 @@ class Config:
 
     def output_url(self) -> str:
         base = self.rtmp_url.rstrip("/")
-        return f"{base}/{self.stream_key}"
+        return f"{base}/{self.vk_key}"
 
 
 def find_start_index(files: List[Path], start_ep: str) -> Optional[int]:
