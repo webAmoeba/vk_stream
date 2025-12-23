@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import signal
 import subprocess
 import sys
@@ -11,7 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from obsws_python import obsws, requests
+try:
+    from obsws_python import ReqClient
+
+    _OBS_REQ_CLIENT = True
+except Exception:  # pragma: no cover - fallback for older obsws-python
+    from obsws_python import obsws, requests as obs_requests
+
+    _OBS_REQ_CLIENT = False
 
 from .common import (
     EP_RE,
@@ -165,12 +173,43 @@ def item_get(obj, key: str, default=None):
     return default
 
 
-def connect_obs(cfg: Config, retries: int = 60, delay: float = 1.0) -> obsws:
-    ws = obsws(host=cfg.obs_host, port=cfg.obs_port, password=cfg.obs_password)
+def _to_snake(name: str) -> str:
+    s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+
+class ObsClient:
+    def __init__(self, host: str, port: int, password: str, timeout: float = 5.0):
+        self._req_client = _OBS_REQ_CLIENT
+        if self._req_client:
+            self._ws = ReqClient(host=host, port=port, password=password, timeout=timeout)
+        else:
+            self._ws = obsws(host=host, port=port, password=password)
+
+    def connect(self) -> None:
+        if not self._req_client:
+            self._ws.connect()
+
+    def disconnect(self) -> None:
+        if not self._req_client:
+            self._ws.disconnect()
+
+    def call(self, name: str, **kwargs):
+        if self._req_client:
+            method = _to_snake(name)
+            func = getattr(self._ws, method)
+            return func(**kwargs)
+        req_cls = getattr(obs_requests, name)
+        return self._ws.call(req_cls(**kwargs))
+
+
+def connect_obs(cfg: Config, retries: int = 60, delay: float = 1.0) -> ObsClient:
     last_err: Optional[Exception] = None
     for _ in range(retries):
         try:
+            ws = ObsClient(cfg.obs_host, cfg.obs_port, cfg.obs_password)
             ws.connect()
+            ws.call("GetVersion")
             return ws
         except Exception as exc:
             last_err = exc
@@ -178,66 +217,62 @@ def connect_obs(cfg: Config, retries: int = 60, delay: float = 1.0) -> obsws:
     raise RuntimeError(f"OBS websocket not reachable: {last_err}")
 
 
-def ensure_scene(ws: obsws, scene_name: str) -> None:
-    resp = ws.call(requests.GetSceneList())
+def ensure_scene(ws: ObsClient, scene_name: str) -> None:
+    resp = ws.call("GetSceneList")
     scenes = resp_get(resp, "scenes", []) or []
     if not any(item_get(s, "sceneName") == scene_name for s in scenes):
-        ws.call(requests.CreateScene(sceneName=scene_name))
+        ws.call("CreateScene", sceneName=scene_name)
 
 
 def ensure_input(
-    ws: obsws,
+    ws: ObsClient,
     scene_name: str,
     input_name: str,
     input_kind: str,
     input_settings: dict,
     enabled: bool = True,
 ) -> None:
-    resp = ws.call(requests.GetInputList())
+    resp = ws.call("GetInputList")
     inputs = resp_get(resp, "inputs", []) or []
     if any(item_get(i, "inputName") == input_name for i in inputs):
         ws.call(
-            requests.SetInputSettings(
-                inputName=input_name,
-                inputSettings=input_settings,
-                overlay=False,
-            )
+            "SetInputSettings",
+            inputName=input_name,
+            inputSettings=input_settings,
+            overlay=False,
         )
     else:
         ws.call(
-            requests.CreateInput(
-                sceneName=scene_name,
-                inputName=input_name,
-                inputKind=input_kind,
-                inputSettings=input_settings,
-                sceneItemEnabled=enabled,
-            )
+            "CreateInput",
+            sceneName=scene_name,
+            inputName=input_name,
+            inputKind=input_kind,
+            inputSettings=input_settings,
+            sceneItemEnabled=enabled,
         )
 
 
-def set_scene_item_pos(ws: obsws, scene_name: str, source_name: str, x: float, y: float) -> None:
-    resp = ws.call(requests.GetSceneItemId(sceneName=scene_name, sourceName=source_name))
+def set_scene_item_pos(ws: ObsClient, scene_name: str, source_name: str, x: float, y: float) -> None:
+    resp = ws.call("GetSceneItemId", sceneName=scene_name, sourceName=source_name)
     item_id = resp_get(resp, "sceneItemId")
     if item_id is None:
         return
     ws.call(
-        requests.SetSceneItemTransform(
-            sceneName=scene_name,
-            sceneItemId=item_id,
-            sceneItemTransform={"positionX": x, "positionY": y},
-        )
+        "SetSceneItemTransform",
+        sceneName=scene_name,
+        sceneItemId=item_id,
+        sceneItemTransform={"positionX": x, "positionY": y},
     )
 
 
-def configure_stream(ws: obsws, cfg: Config) -> None:
+def configure_stream(ws: ObsClient, cfg: Config) -> None:
     ws.call(
-        requests.SetStreamServiceSettings(
-            streamServiceType="rtmp_custom",
-            streamServiceSettings={"server": cfg.vk_url, "key": cfg.vk_key},
-        )
+        "SetStreamServiceSettings",
+        streamServiceType="rtmp_custom",
+        streamServiceSettings={"server": cfg.vk_url, "key": cfg.vk_key},
     )
 
-    resp = ws.call(requests.GetOutputList())
+    resp = ws.call("GetOutputList")
     outputs = resp_get(resp, "outputs", []) or []
     output_name = None
     for out in outputs:
@@ -251,7 +286,7 @@ def configure_stream(ws: obsws, cfg: Config) -> None:
         log("WARN: could not find streaming output to configure")
         return
 
-    settings_resp = ws.call(requests.GetOutputSettings(outputName=output_name))
+    settings_resp = ws.call("GetOutputSettings", outputName=output_name)
     settings = resp_get(settings_resp, "outputSettings", {}) or {}
     updated = dict(settings)
 
@@ -279,21 +314,20 @@ def configure_stream(ws: obsws, cfg: Config) -> None:
 
     if updated != settings:
         ws.call(
-            requests.SetOutputSettings(
-                outputName=output_name,
-                outputSettings=updated,
-            )
+            "SetOutputSettings",
+            outputName=output_name,
+            outputSettings=updated,
         )
 
 
-def ensure_streaming(ws: obsws) -> None:
-    resp = ws.call(requests.GetStreamStatus())
+def ensure_streaming(ws: ObsClient) -> None:
+    resp = ws.call("GetStreamStatus")
     active = resp_get(resp, "outputActive", False)
     if not active:
-        ws.call(requests.StartStream())
+        ws.call("StartStream")
 
 
-def update_vlc_source(ws: obsws, cfg: Config, input_path: Path) -> None:
+def update_vlc_source(ws: ObsClient, cfg: Config, input_path: Path) -> None:
     settings = {
         "playlist": [{"value": str(input_path), "hidden": False}],
         "loop": False,
@@ -302,24 +336,22 @@ def update_vlc_source(ws: obsws, cfg: Config, input_path: Path) -> None:
         "subtitle_track": cfg.sub_si,
     }
     ws.call(
-        requests.SetInputSettings(
-            inputName=cfg.obs_vlc_source,
-            inputSettings=settings,
-            overlay=False,
-        )
+        "SetInputSettings",
+        inputName=cfg.obs_vlc_source,
+        inputSettings=settings,
+        overlay=False,
     )
     try:
         ws.call(
-            requests.TriggerMediaInputAction(
-                inputName=cfg.obs_vlc_source,
-                mediaAction="OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART",
-            )
+            "TriggerMediaInputAction",
+            inputName=cfg.obs_vlc_source,
+            mediaAction="OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART",
         )
     except Exception:
         pass
 
 
-def update_text(ws: obsws, cfg: Config, title: str) -> None:
+def update_text(ws: ObsClient, cfg: Config, title: str) -> None:
     settings = {
         "text": title,
         "font": {"face": "DejaVu Sans", "size": 36, "style": "Regular"},
@@ -329,17 +361,16 @@ def update_text(ws: obsws, cfg: Config, title: str) -> None:
         "outline_color": 4278190080,
     }
     ws.call(
-        requests.SetInputSettings(
-            inputName=cfg.obs_text_source,
-            inputSettings=settings,
-            overlay=False,
-        )
+        "SetInputSettings",
+        inputName=cfg.obs_text_source,
+        inputSettings=settings,
+        overlay=False,
     )
 
 
-def wait_for_media_end(ws: obsws, cfg: Config, stop_flag) -> int:
+def wait_for_media_end(ws: ObsClient, cfg: Config, stop_flag) -> int:
     while not stop_flag():
-        resp = ws.call(requests.GetMediaInputStatus(inputName=cfg.obs_vlc_source))
+        resp = ws.call("GetMediaInputStatus", inputName=cfg.obs_vlc_source)
         state = resp_get(resp, "mediaState", "")
         if state in {
             "OBS_MEDIA_STATE_ENDED",
@@ -398,14 +429,13 @@ def stream_files(cfg: Config, files: List[Path], dry_run: bool) -> int:
     set_scene_item_pos(ws, cfg.obs_scene, cfg.obs_text_source, 20, 20)
 
     ws.call(
-        requests.SetVideoSettings(
-            baseWidth=width,
-            baseHeight=height,
-            outputWidth=width,
-            outputHeight=height,
-            fpsNumerator=fps_num,
-            fpsDenominator=fps_den,
-        )
+        "SetVideoSettings",
+        baseWidth=width,
+        baseHeight=height,
+        outputWidth=width,
+        outputHeight=height,
+        fpsNumerator=fps_num,
+        fpsDenominator=fps_den,
     )
     configure_stream(ws, cfg)
 
@@ -438,8 +468,8 @@ def stream_files(cfg: Config, files: List[Path], dry_run: bool) -> int:
             first_pass = False
     finally:
         try:
-            if resp_get(ws.call(requests.GetStreamStatus()), "outputActive", False):
-                ws.call(requests.StopStream())
+            if resp_get(ws.call("GetStreamStatus"), "outputActive", False):
+                ws.call("StopStream")
         except Exception:
             pass
         try:
