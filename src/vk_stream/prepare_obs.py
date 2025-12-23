@@ -17,7 +17,7 @@ def main() -> int:
     config_dir.mkdir(parents=True, exist_ok=True)
     global_ini = config_dir / "global.ini"
 
-    parser = configparser.ConfigParser()
+    parser = configparser.ConfigParser(strict=False)
     parser.optionxform = str
     if global_ini.exists():
         parser.read(global_ini)
