@@ -52,6 +52,15 @@ def main() -> int:
         },
     )
     ensure(
+        "OBSWebSocket",
+        {
+            "ServerEnabled": enabled,
+            "ServerPort": str(port),
+            "ServerPassword": password,
+            "AlertsEnabled": "false",
+        },
+    )
+    ensure(
         "obs-websocket",
         {
             "server_enabled": enabled,
