@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import configparser
+import json
 from pathlib import Path
 
 from .common import env_int, env_str, load_dotenv
@@ -72,6 +73,32 @@ def main() -> int:
 
     with global_ini.open("w", encoding="utf-8") as fh:
         parser.write(fh)
+
+    # obs-websocket v5 stores settings in a JSON config file; write a few
+    # common locations/keys to maximize compatibility across builds.
+    obsws_payload = {
+        "server_enabled": enabled == "true",
+        "server_port": port,
+        "server_password": password,
+        "auth_required": auth_required == "true",
+        "first_load": False,
+        # Alternative key casing seen in some builds
+        "ServerEnabled": enabled == "true",
+        "ServerPort": port,
+        "ServerPassword": password,
+        "AuthRequired": auth_required == "true",
+        "FirstLoad": False,
+    }
+
+    candidate_dirs = [
+        config_dir / "plugin_config" / "obs-websocket",
+        config_dir / "obs-websocket",
+        config_dir / "config" / "obs-websocket",
+    ]
+    for obsws_dir in candidate_dirs:
+        obsws_dir.mkdir(parents=True, exist_ok=True)
+        with (obsws_dir / "config.json").open("w", encoding="utf-8") as fh:
+            json.dump(obsws_payload, fh, ensure_ascii=False, indent=2)
 
     return 0
 
