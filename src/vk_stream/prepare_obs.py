@@ -22,12 +22,44 @@ def main() -> int:
     if global_ini.exists():
         parser.read(global_ini)
 
-    if "WebSocket" not in parser:
-        parser["WebSocket"] = {}
+    def ensure(section: str, items: dict) -> None:
+        if section not in parser:
+            parser[section] = {}
+        for key, value in items.items():
+            parser[section][key] = value
 
-    parser["WebSocket"]["ServerEnabled"] = "true"
-    parser["WebSocket"]["ServerPort"] = str(port)
-    parser["WebSocket"]["ServerPassword"] = password
+    enabled = "true"
+    auth_required = "true" if password else "false"
+
+    # OBS 29+ (built-in obs-websocket 5)
+    ensure(
+        "WebSocketServer",
+        {
+            "ServerEnabled": enabled,
+            "ServerPort": str(port),
+            "ServerPassword": password,
+            "AuthRequired": auth_required,
+        },
+    )
+
+    # Legacy / alternative section names used by some builds
+    ensure(
+        "WebSocket",
+        {
+            "ServerEnabled": enabled,
+            "ServerPort": str(port),
+            "ServerPassword": password,
+        },
+    )
+    ensure(
+        "obs-websocket",
+        {
+            "server_enabled": enabled,
+            "server_port": str(port),
+            "server_password": password,
+            "auth_required": auth_required,
+        },
+    )
 
     with global_ini.open("w", encoding="utf-8") as fh:
         parser.write(fh)
