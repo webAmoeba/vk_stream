@@ -2,20 +2,22 @@
 from __future__ import annotations
 
 import argparse
-import shlex
+import json
 import signal
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
+
+from obsws_python import obsws, requests
 
 from .common import (
     EP_RE,
     env_bool,
     env_int,
     env_str,
-    escape_filter_path,
     load_dotenv,
     parse_exts,
     scan_videos,
@@ -26,31 +28,31 @@ from .common import (
 class Config:
     vk_url: str
     vk_key: str
-    twitch_url: str
-    twitch_key: str
     video_dir: Path
     start_ep: str
     loop: bool
     loglevel: str
-    ffmpeg_path: str
+    ffprobe_path: str
     video_exts: List[str]
     audio_index: int
     sub_si: int
     video_bitrate: str
-    maxrate: str
-    bufsize: str
+    audio_bitrate: str
     preset: str
     gop: int
-    audio_bitrate: str
     audio_rate: str
     audio_channels: int
+    obs_host: str
+    obs_port: int
+    obs_password: str
+    obs_scene: str
+    obs_vlc_source: str
+    obs_text_source: str
 
     @classmethod
     def from_env(cls, cwd: Path) -> "Config":
-        vk_url = env_str("VK_URL", "")
-        vk_key = env_str("VK_KEY", "")
-        twitch_url = env_str("TWITCH_URL", "")
-        twitch_key = env_str("TWITCH_KEY", "")
+        vk_url = env_str("VK_URL", required=True)
+        vk_key = env_str("VK_KEY", required=True)
         video_dir = env_str("VIDEO_DIR", required=True)
         start_ep = env_str("START_EP", "")
 
@@ -62,35 +64,69 @@ class Config:
         return cls(
             vk_url=vk_url,
             vk_key=vk_key,
-            twitch_url=twitch_url,
-            twitch_key=twitch_key,
             video_dir=video_dir_path,
             start_ep=start_ep,
             loop=env_bool("LOOP", True),
             loglevel=env_str("LOGLEVEL", "info"),
-            ffmpeg_path=env_str("FFMPEG_PATH", "ffmpeg"),
+            ffprobe_path=env_str("FFPROBE_PATH", "ffprobe"),
             video_exts=parse_exts(env_str("VIDEO_EXTS", ".mkv")),
             audio_index=env_int("AUDIO_INDEX", default=1),
             sub_si=env_int("SUB_SI", default=1),
             video_bitrate=env_str("STREAM_VIDEO_BITRATE", "3000k"),
-            maxrate=env_str("STREAM_MAXRATE", "6000k"),
-            bufsize=env_str("STREAM_BUFSIZE", "9000k"),
+            audio_bitrate=env_str("STREAM_AUDIO_BITRATE", "160k"),
             preset=env_str("STREAM_PRESET", "superfast"),
             gop=env_int("STREAM_GOP", default=48),
-            audio_bitrate=env_str("STREAM_AUDIO_BITRATE", "160k"),
             audio_rate=env_str("STREAM_AUDIO_RATE", "48000"),
             audio_channels=env_int("STREAM_AUDIO_CHANNELS", default=2),
+            obs_host=env_str("OBS_HOST", "127.0.0.1"),
+            obs_port=env_int("OBS_PORT", default=4455),
+            obs_password=env_str("OBS_PASSWORD", ""),
+            obs_scene=env_str("OBS_SCENE", "Scene"),
+            obs_vlc_source=env_str("OBS_VLC_SOURCE", "VLC"),
+            obs_text_source=env_str("OBS_TEXT_SOURCE", "NowPlaying"),
         )
 
-    def output_urls(self) -> List[str]:
-        outputs: List[str] = []
-        if self.vk_url and self.vk_key:
-            base = self.vk_url.rstrip("/")
-            outputs.append(f"{base}/{self.vk_key}")
-        if self.twitch_url and self.twitch_key:
-            base = self.twitch_url.rstrip("/")
-            outputs.append(f"{base}/{self.twitch_key}")
-        return outputs
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+
+def parse_ratio(raw: str) -> Tuple[int, int]:
+    if "/" in raw:
+        num, den = raw.split("/", 1)
+        return int(num), int(den)
+    return int(float(raw) * 1000), 1000
+
+
+def parse_bitrate_kbps(raw: str) -> int:
+    val = raw.strip().lower()
+    if val.endswith("k"):
+        return int(float(val[:-1]))
+    if val.endswith("m"):
+        return int(float(val[:-1]) * 1000)
+    return int(float(val))
+
+
+def ffprobe_video_info(cfg: Config, path: Path) -> Tuple[int, int, int, int]:
+    cmd = [
+        cfg.ffprobe_path,
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,r_frame_rate",
+        "-of",
+        "json",
+        str(path),
+    ]
+    out = subprocess.check_output(cmd, text=True)
+    data = json.loads(out)
+    stream = data["streams"][0]
+    width = int(stream["width"])
+    height = int(stream["height"])
+    fps_num, fps_den = parse_ratio(stream.get("r_frame_rate", "24/1"))
+    return width, height, fps_num, fps_den
 
 
 def find_start_index(files: List[Path], start_ep: str) -> Optional[int]:
@@ -113,124 +149,303 @@ def title_for_path(path: Path) -> str:
     return safe[:64] if safe else "VIDEO"
 
 
-def build_ffmpeg_cmd(cfg: Config, input_path: Path, output_urls: List[str]) -> List[str]:
-    subs_path = escape_filter_path(input_path)
-    title = title_for_path(input_path)
-    vf = (
-        f"subtitles={subs_path}:si={cfg.sub_si},"
-        f"drawtext=text='{title}':x=20:y=20:fontsize=36:fontcolor=white:"
-        f"box=1:boxcolor=black@0.5:boxborderw=10"
+def resp_get(obj, key: str, default=None):
+    if hasattr(obj, key):
+        return getattr(obj, key)
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return default
+
+
+def item_get(obj, key: str, default=None):
+    if hasattr(obj, key):
+        return getattr(obj, key)
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return default
+
+
+def connect_obs(cfg: Config, retries: int = 60, delay: float = 1.0) -> obsws:
+    ws = obsws(host=cfg.obs_host, port=cfg.obs_port, password=cfg.obs_password)
+    last_err: Optional[Exception] = None
+    for _ in range(retries):
+        try:
+            ws.connect()
+            return ws
+        except Exception as exc:
+            last_err = exc
+            time.sleep(delay)
+    raise RuntimeError(f"OBS websocket not reachable: {last_err}")
+
+
+def ensure_scene(ws: obsws, scene_name: str) -> None:
+    resp = ws.call(requests.GetSceneList())
+    scenes = resp_get(resp, "scenes", []) or []
+    if not any(item_get(s, "sceneName") == scene_name for s in scenes):
+        ws.call(requests.CreateScene(sceneName=scene_name))
+
+
+def ensure_input(
+    ws: obsws,
+    scene_name: str,
+    input_name: str,
+    input_kind: str,
+    input_settings: dict,
+    enabled: bool = True,
+) -> None:
+    resp = ws.call(requests.GetInputList())
+    inputs = resp_get(resp, "inputs", []) or []
+    if any(item_get(i, "inputName") == input_name for i in inputs):
+        ws.call(
+            requests.SetInputSettings(
+                inputName=input_name,
+                inputSettings=input_settings,
+                overlay=False,
+            )
+        )
+    else:
+        ws.call(
+            requests.CreateInput(
+                sceneName=scene_name,
+                inputName=input_name,
+                inputKind=input_kind,
+                inputSettings=input_settings,
+                sceneItemEnabled=enabled,
+            )
+        )
+
+
+def set_scene_item_pos(ws: obsws, scene_name: str, source_name: str, x: float, y: float) -> None:
+    resp = ws.call(requests.GetSceneItemId(sceneName=scene_name, sourceName=source_name))
+    item_id = resp_get(resp, "sceneItemId")
+    if item_id is None:
+        return
+    ws.call(
+        requests.SetSceneItemTransform(
+            sceneName=scene_name,
+            sceneItemId=item_id,
+            sceneItemTransform={"positionX": x, "positionY": y},
+        )
     )
 
-    cmd = [
-        cfg.ffmpeg_path,
-        "-hide_banner",
-        "-loglevel",
-        cfg.loglevel,
-        "-re",
-        "-i",
-        str(input_path),
-    ]
 
-    for url in output_urls:
-        cmd += [
-            "-vf",
-            vf,
-            "-map",
-            "0:v:0",
-            "-map",
-            f"0:a:{cfg.audio_index}",
-            "-c:v",
-            "libx264",
-            "-preset",
-            cfg.preset,
-            "-pix_fmt",
-            "yuv420p",
-            "-g",
-            str(cfg.gop),
-            "-b:v",
-            cfg.video_bitrate,
-            "-maxrate",
-            cfg.maxrate,
-            "-bufsize",
-            cfg.bufsize,
-            "-c:a",
-            "aac",
-            "-b:a",
-            cfg.audio_bitrate,
-            "-ar",
-            cfg.audio_rate,
-            "-ac",
-            str(cfg.audio_channels),
-            "-f",
-            "flv",
-            url,
-        ]
-    return cmd
+def configure_stream(ws: obsws, cfg: Config) -> None:
+    ws.call(
+        requests.SetStreamServiceSettings(
+            streamServiceType="rtmp_custom",
+            streamServiceSettings={"server": cfg.vk_url, "key": cfg.vk_key},
+        )
+    )
+
+    resp = ws.call(requests.GetOutputList())
+    outputs = resp_get(resp, "outputs", []) or []
+    output_name = None
+    for out in outputs:
+        kind = str(item_get(out, "outputKind", "")).lower()
+        name = item_get(out, "outputName")
+        if "rtmp" in kind or "stream" in str(name).lower():
+            output_name = name
+            break
+
+    if not output_name:
+        log("WARN: could not find streaming output to configure")
+        return
+
+    settings_resp = ws.call(requests.GetOutputSettings(outputName=output_name))
+    settings = resp_get(settings_resp, "outputSettings", {}) or {}
+    updated = dict(settings)
+
+    v_kbps = parse_bitrate_kbps(cfg.video_bitrate)
+    a_kbps = parse_bitrate_kbps(cfg.audio_bitrate)
+
+    for key in (
+        "bitrate",
+        "VBitrate",
+        "video_bitrate",
+        "vbitrate",
+        "bitrate_kbps",
+        "target_bitrate",
+    ):
+        if key in updated:
+            updated[key] = v_kbps
+
+    for key in ("audio_bitrate", "ABitrate", "aBitrate", "audioBitrate"):
+        if key in updated:
+            updated[key] = a_kbps
+
+    for key in ("preset", "x264_preset", "Preset"):
+        if key in updated:
+            updated[key] = cfg.preset
+
+    if updated != settings:
+        ws.call(
+            requests.SetOutputSettings(
+                outputName=output_name,
+                outputSettings=updated,
+            )
+        )
+
+
+def ensure_streaming(ws: obsws) -> None:
+    resp = ws.call(requests.GetStreamStatus())
+    active = resp_get(resp, "outputActive", False)
+    if not active:
+        ws.call(requests.StartStream())
+
+
+def update_vlc_source(ws: obsws, cfg: Config, input_path: Path) -> None:
+    settings = {
+        "playlist": [{"value": str(input_path), "hidden": False}],
+        "loop": False,
+        "shuffle": False,
+        "audio_track": cfg.audio_index,
+        "subtitle_track": cfg.sub_si,
+    }
+    ws.call(
+        requests.SetInputSettings(
+            inputName=cfg.obs_vlc_source,
+            inputSettings=settings,
+            overlay=False,
+        )
+    )
+    try:
+        ws.call(
+            requests.TriggerMediaInputAction(
+                inputName=cfg.obs_vlc_source,
+                mediaAction="OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART",
+            )
+        )
+    except Exception:
+        pass
+
+
+def update_text(ws: obsws, cfg: Config, title: str) -> None:
+    settings = {
+        "text": title,
+        "font": {"face": "DejaVu Sans", "size": 36, "style": "Regular"},
+        "color1": 4294967295,
+        "outline": True,
+        "outline_size": 2,
+        "outline_color": 4278190080,
+    }
+    ws.call(
+        requests.SetInputSettings(
+            inputName=cfg.obs_text_source,
+            inputSettings=settings,
+            overlay=False,
+        )
+    )
+
+
+def wait_for_media_end(ws: obsws, cfg: Config, stop_flag) -> int:
+    while not stop_flag():
+        resp = ws.call(requests.GetMediaInputStatus(inputName=cfg.obs_vlc_source))
+        state = resp_get(resp, "mediaState", "")
+        if state in {
+            "OBS_MEDIA_STATE_ENDED",
+            "OBS_MEDIA_STATE_STOPPED",
+            "OBS_MEDIA_STATE_NONE",
+        }:
+            return 0
+        if state == "OBS_MEDIA_STATE_ERROR":
+            return 2
+        time.sleep(1)
+    return 0
 
 
 def stream_files(cfg: Config, files: List[Path], dry_run: bool) -> int:
     if not files:
-        print("No video files found.", file=sys.stderr)
+        log("No video files found.")
         return 2
 
     start_idx = find_start_index(files, cfg.start_ep)
     if cfg.start_ep and start_idx is None:
-        print(f"WARN: START_EP not found: {cfg.start_ep}", file=sys.stderr)
+        log(f"WARN: START_EP not found: {cfg.start_ep}")
         start_idx = 0
 
-    current_proc: Optional[subprocess.Popen] = None
+    width, height, fps_num, fps_den = ffprobe_video_info(cfg, files[0])
+
+    ws = connect_obs(cfg)
     stop = False
 
     def handle(_sig: int, _frame) -> None:
         nonlocal stop
         stop = True
-        if current_proc and current_proc.poll() is None:
-            try:
-                current_proc.terminate()
-            except ProcessLookupError:
-                return
-            try:
-                current_proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                current_proc.kill()
 
     signal.signal(signal.SIGTERM, handle)
     signal.signal(signal.SIGINT, handle)
 
+    ensure_scene(ws, cfg.obs_scene)
+
+    vlc_settings = {
+        "playlist": [{"value": str(files[0]), "hidden": False}],
+        "loop": False,
+        "shuffle": False,
+        "audio_track": cfg.audio_index,
+        "subtitle_track": cfg.sub_si,
+    }
+    ensure_input(ws, cfg.obs_scene, cfg.obs_vlc_source, "vlc_source", vlc_settings)
+
+    text_settings = {
+        "text": title_for_path(files[0]),
+        "font": {"face": "DejaVu Sans", "size": 36, "style": "Regular"},
+        "color1": 4294967295,
+        "outline": True,
+        "outline_size": 2,
+        "outline_color": 4278190080,
+    }
+    ensure_input(ws, cfg.obs_scene, cfg.obs_text_source, "text_ft2_source", text_settings)
+    set_scene_item_pos(ws, cfg.obs_scene, cfg.obs_text_source, 20, 20)
+
+    ws.call(
+        requests.SetVideoSettings(
+            baseWidth=width,
+            baseHeight=height,
+            outputWidth=width,
+            outputHeight=height,
+            fpsNumerator=fps_num,
+            fpsDenominator=fps_den,
+        )
+    )
+    configure_stream(ws, cfg)
+
+    if dry_run:
+        log("Dry run: OBS configured, not starting stream.")
+        return 0
+
+    ensure_streaming(ws)
+
     first_pass = True
-    while True:
-        if first_pass and start_idx:
-            order = files[start_idx:] + files[:start_idx]
-        else:
-            order = files
+    try:
+        while True:
+            if first_pass and start_idx:
+                order = files[start_idx:] + files[:start_idx]
+            else:
+                order = files
 
-        for idx, f in enumerate(order, start=1):
-            if stop:
-                return 0
-            print(
-                f"Playing {idx}/{len(order)}: {f}",
-                file=sys.stderr,
-            )
-            output_urls = cfg.output_urls()
-            if not output_urls:
-                print("Config error: no output targets set", file=sys.stderr)
-                return 2
-            cmd = build_ffmpeg_cmd(cfg, f, output_urls)
-            print("FFmpeg:", shlex.join(cmd), file=sys.stderr)
-            if dry_run:
-                return 0
+            for idx, f in enumerate(order, start=1):
+                if stop:
+                    return 0
+                log(f"Playing {idx}/{len(order)}: {f}")
+                update_text(ws, cfg, title_for_path(f))
+                update_vlc_source(ws, cfg, f)
+                code = wait_for_media_end(ws, cfg, lambda: stop)
+                if code != 0:
+                    return code
 
-            current_proc = subprocess.Popen(cmd)
-            code = current_proc.wait()
-            if stop:
-                return code
-            if code != 0:
-                return code
-
-        if not cfg.loop:
-            break
-        first_pass = False
+            if not cfg.loop:
+                break
+            first_pass = False
+    finally:
+        try:
+            if resp_get(ws.call(requests.GetStreamStatus()), "outputActive", False):
+                ws.call(requests.StopStream())
+        except Exception:
+            pass
+        try:
+            ws.disconnect()
+        except Exception:
+            pass
 
     return 0
 
@@ -239,18 +454,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     cwd = Path.cwd()
     load_dotenv(cwd / ".env")
 
-    parser = argparse.ArgumentParser(description="VK video streamer (simple, per-file)")
-    parser.add_argument("--dry-run", action="store_true", help="Print ffmpeg command and exit")
+    parser = argparse.ArgumentParser(description="OBS-based VK streamer (VLC source)")
+    parser.add_argument("--dry-run", action="store_true", help="Configure OBS and exit")
     args = parser.parse_args(argv)
 
     try:
         cfg = Config.from_env(cwd)
     except Exception as exc:
-        print(f"Config error: {exc}", file=sys.stderr)
+        log(f"Config error: {exc}")
         return 2
 
     if not cfg.video_dir.exists():
-        print(f"VIDEO_DIR does not exist: {cfg.video_dir}", file=sys.stderr)
+        log(f"VIDEO_DIR does not exist: {cfg.video_dir}")
         return 2
 
     files = scan_videos(cfg.video_dir, cfg.video_exts)

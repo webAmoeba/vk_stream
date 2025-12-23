@@ -6,9 +6,9 @@ WORKDIR := $(CURDIR)
 .PHONY: deps venv install start stop restart status logs enable disable uninstall
 
 deps:
-	@if ! command -v ffmpeg >/dev/null || ! command -v curl >/dev/null; then \
+	@if ! command -v ffmpeg >/dev/null || ! command -v obs >/dev/null || ! command -v vlc >/dev/null; then \
 		apt-get update; \
-		apt-get install -y ffmpeg curl ca-certificates; \
+		apt-get install -y ffmpeg vlc obs-studio xvfb pulseaudio pulseaudio-utils xauth curl ca-certificates; \
 	fi
 
 venv:
@@ -28,6 +28,7 @@ venv:
 	uv pip install -e .
 
 install: deps venv
+	@chmod +x $(WORKDIR)/bin/run_obs.sh
 	@sed "s|__WORKDIR__|$(WORKDIR)|g" $(SERVICE_TEMPLATE) > $(SYSTEMD_PATH)
 	systemctl daemon-reload
 

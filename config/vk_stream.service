@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=__WORKDIR__
 EnvironmentFile=__WORKDIR__/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=__WORKDIR__/.venv/bin/python -m vk_stream
+ExecStart=__WORKDIR__/bin/run_obs.sh
 Restart=always
 RestartSec=5
 TimeoutStartSec=0

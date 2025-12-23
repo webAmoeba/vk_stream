@@ -1,9 +1,11 @@
 [project]
 name = "vk-stream"
-version = "0.1.0"
-description = "Simple VK RTMP streamer (per-file, subtitles burned)"
+version = "0.2.0"
+description = "OBS-based VK streamer (VLC source with burned subtitles)"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+  "obsws-python>=1.6.0",
+]
 
 [project.scripts]
 vk-stream = "vk_stream.cli:main"
