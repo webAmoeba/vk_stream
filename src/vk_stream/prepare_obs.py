@@ -14,6 +14,9 @@ def main() -> int:
 
     port = env_int("OBS_PORT", default=4455)
     password = env_str("OBS_PASSWORD", "")
+    if not password:
+        print("OBS_PASSWORD is required for obs-websocket. Set it in .env.")
+        return 2
 
     config_root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     config_dir = config_root / "obs-studio"
@@ -33,7 +36,7 @@ def main() -> int:
 
     enabled = "true"
     first_load = "false"
-    auth_required = "true" if password else "false"
+    auth_required = "true"
 
     # OBS 29+ (built-in obs-websocket 5)
     ensure(
@@ -85,11 +88,18 @@ def main() -> int:
     # obs-websocket v5 stores settings in a JSON config file; write a few
     # common locations/keys to maximize compatibility across builds.
     obsws_payload = {
+        # snake_case keys (newer obs-websocket config.json)
         "server_enabled": True,
         "server_port": port,
-        "auth_required": bool(password),
+        "auth_required": True,
         "first_load": False,
         "server_password": password,
+        # CamelCase keys (some builds expect these)
+        "ServerEnabled": True,
+        "ServerPort": port,
+        "AuthRequired": True,
+        "FirstLoad": False,
+        "ServerPassword": password,
     }
 
     candidate_dirs = [
