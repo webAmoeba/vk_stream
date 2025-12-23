@@ -90,13 +90,7 @@ def main() -> int:
         "auth_required": bool(password),
         "first_load": False,
         "server_password": password,
-        "ServerEnabled": True,
-        "ServerPort": port,
-        "AuthRequired": bool(password),
-        "FirstLoad": False,
-        "ServerPassword": password,
     }
-
 
     candidate_dirs = [
         config_dir / "plugin_config" / "obs-websocket",
