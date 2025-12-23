@@ -77,18 +77,14 @@ def main() -> int:
     # obs-websocket v5 stores settings in a JSON config file; write a few
     # common locations/keys to maximize compatibility across builds.
     obsws_payload = {
-        "server_enabled": enabled == "true",
+        "server_enabled": True,
         "server_port": port,
-        "server_password": password,
-        "auth_required": auth_required == "true",
+        "auth_required": bool(password),
         "first_load": False,
-        # Alternative key casing seen in some builds
-        "ServerEnabled": enabled == "true",
-        "ServerPort": port,
-        "ServerPassword": password,
-        "AuthRequired": auth_required == "true",
-        "FirstLoad": False,
     }
+    if password:
+        obsws_payload["server_password"] = password
+
 
     candidate_dirs = [
         config_dir / "plugin_config" / "obs-websocket",
