@@ -1,7 +1,7 @@
 [project]
 name = "vk-stream"
 version = "0.1.0"
-description = "Simple VK RTMP streamer (per-file, subtitles burned)"
+description = "Minimal VK RTMP mp4 looper (no subtitles, no extras)"
 requires-python = ">=3.10"
 dependencies = []
 
